@@ -175,9 +175,9 @@ Flag takes precedence over env var.
 > [!WARNING]
 > **DSN contains credentials.** The `--dsn` flag is visible in `ps` / process listings. **Prefer the `DSN` env var** for any environment where other users share the host (CI runners, shared dev boxes, production). The CLI flag exists for quick local debugging only.
 
-### 2.3 Introspection Query
+### 2.3 Introspection Queries
 
-Single query against `INFORMATION_SCHEMA.COLUMNS`:
+**Column metadata** — `INFORMATION_SCHEMA.COLUMNS`:
 
 ```sql
 SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT
@@ -185,6 +185,17 @@ FROM   INFORMATION_SCHEMA.COLUMNS
 WHERE  TABLE_SCHEMA = DATABASE()
 ORDER  BY TABLE_NAME, ORDINAL_POSITION;
 ```
+
+**Foreign key relationships** — `INFORMATION_SCHEMA.KEY_COLUMN_USAGE`:
+
+```sql
+SELECT TABLE_NAME, COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME
+FROM   INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+WHERE  TABLE_SCHEMA = DATABASE()
+  AND  REFERENCED_TABLE_NAME IS NOT NULL;
+```
+
+FK relationships are **structural facts the database already knows** — same category as column type or nullability. Introspecting them avoids relying on humans to hand-type "FK → table.column" in `context.yaml` descriptions (which is exactly the kind of drift this project exists to prevent). The `context.yaml` `description` field remains for *meaning* ("why this FK exists"), not *structure* ("what it points to").
 
 No custom SQL parser needed. Standard `database/sql` + `github.com/go-sql-driver/mysql`.
 
@@ -201,14 +212,20 @@ type MergedTable struct {
 }
 
 type MergedColumn struct {
-    Name         string `json:"name"`
-    DataType     string `json:"data_type"`      // from DB
-    Nullable     bool   `json:"nullable"`        // from DB
-    DefaultValue string `json:"default_value"`   // from DB, or ""
-    Description  string `json:"description"`     // from context.yaml, or ""
-    Sensitive    bool   `json:"sensitive"`
-    PII          bool   `json:"pii"`
-    Documented   bool   `json:"documented"`      // true if context.yaml had an entry
+    Name         string      `json:"name"`
+    DataType     string      `json:"data_type"`      // from DB
+    Nullable     bool        `json:"nullable"`        // from DB
+    DefaultValue string      `json:"default_value"`   // from DB, or ""
+    References   *ForeignKey `json:"references"`      // from DB via KEY_COLUMN_USAGE, or nil
+    Description  string      `json:"description"`     // from context.yaml, or ""
+    Sensitive    bool        `json:"sensitive"`
+    PII          bool        `json:"pii"`
+    Documented   bool        `json:"documented"`      // true if context.yaml had an entry
+}
+
+type ForeignKey struct {
+    Table  string `json:"table"`   // referenced table name
+    Column string `json:"column"`  // referenced column name
 }
 ```
 
@@ -241,7 +258,10 @@ INFO  schema introspected at 2026-08-08T15:30:00Z  tables=4 columns=14
 
 #### Resource: `schema://full`
 
-Returns the entire merged model as JSON:
+Returns the entire merged model as JSON.
+
+> [!NOTE]
+> **Scalability**: The resource payload is O(schema size) — every table and column is serialised into one JSON blob. At the current scale (4 tables, ~14 columns) this is trivial. If adopted on larger schemas, the per-call token cost for agents consuming this resource will grow linearly. The `explain_column` tool already exists as the targeted alternative for single-column lookups. Revisit with pagination or per-table resources if this becomes a real-world bottleneck.
 
 ```json
 {
@@ -256,6 +276,7 @@ Returns the entire merged model as JSON:
           "data_type": "integer",
           "nullable": false,
           "default_value": "auto_increment",
+          "references": null,
           "description": "Auto-generated primary key.",
           "sensitive": false,
           "pii": false,
@@ -287,6 +308,7 @@ Returns the entire merged model as JSON:
     "data_type": "text",
     "nullable": true,
     "default_value": "",
+    "references": null,
     "description": "Internal safety tier: 'safe', 'restricted', or 'banned'.",
     "sensitive": true,
     "pii": false,
@@ -530,9 +552,12 @@ eval/
 ```
 
 **Flow:**
-1. `conftest.py` starts the Go MCP server as a subprocess (stdio).
-2. Connects an LLM (configurable via `EVAL_MODEL` env var — defaults to `gpt-4o`) as an MCP client.
+1. `conftest.py` starts the Go MCP server as a subprocess (stdio) via a **`scope="session"`** pytest fixture.
+2. Connects an LLM (configurable via `EVAL_MODEL` env var — defaults to `gpt-4o`) as an MCP client — also session-scoped.
 3. Each test function sends a question, captures the LLM's response, and evaluates it using DeepEval metrics.
+
+> [!IMPORTANT]
+> **Both the `mcp_server` and `mcp_client` fixtures must be `scope="session"`**, not the pytest default of `function`. With ~5+ test functions, function-scoped fixtures would spin up a fresh server subprocess and LLM client round-trip per test — unnecessary latency (~2-3s each) and unnecessary LLM API cost on every CI run. Session scope: one server start, one client connection, all tests share it.
 
 ### 5.3 Test Cases & Metrics
 
