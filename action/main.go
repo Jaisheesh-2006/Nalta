@@ -15,6 +15,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Validate required fields for the current mode
+	if err := cfg.Validate(); err != nil {
+		slog.Error("invalid config", "error", err)
+		os.Exit(1)
+	}
+
 	// Load context.yaml
 	ctx, err := contextfile.Load(cfg.ContextFile)
 	if err != nil {
