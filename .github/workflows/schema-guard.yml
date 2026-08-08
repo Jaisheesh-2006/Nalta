@@ -3,7 +3,7 @@ name: Schema Guard
 on:
   pull_request:
     paths:
-      - 'migrations/**'
+      - 'examples/synthea/migrations/**'   # fixed: was 'migrations/**' — that path doesn't exist
 
 jobs:
   guard:
@@ -23,5 +23,5 @@ jobs:
       - name: Run schema guard
         run: |
           ./schema-guard \
-            --context ./context.yaml \
+            --context ./examples/synthea/context.yaml \
             --dry-run
