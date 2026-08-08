@@ -172,6 +172,9 @@ Expose Tool:     "explain_column"
 
 Flag takes precedence over env var.
 
+> [!WARNING]
+> **DSN contains credentials.** The `--dsn` flag is visible in `ps` / process listings. **Prefer the `DSN` env var** for any environment where other users share the host (CI runners, shared dev boxes, production). The CLI flag exists for quick local debugging only.
+
 ### 2.3 Introspection Query
 
 Single query against `INFORMATION_SCHEMA.COLUMNS`:
@@ -218,7 +221,21 @@ type MergedColumn struct {
 | context.yaml references column **not in DB** | **Warning logged**: `"context.yaml references ingredients.old_col which does not exist in database — skipping"`. Entry is dropped from merged output. |
 | context.yaml references table **not in DB** | Same — warn and skip the entire table entry from context. DB tables still appear. |
 
-### 2.5 MCP Exposition
+### 2.5 Schema Staleness Policy
+
+**Introspection runs once at startup.** The merged model is built in memory and served for the lifetime of the process. If the underlying MySQL schema changes while the server is running (e.g., a migration runs during local dev), the MCP server will serve stale data.
+
+**Documented limitation**: a server restart is required to pick up schema changes. This is acceptable for v1 because:
+- In production-like usage, the DB schema rarely changes while the server is running.
+- In local dev, restarting the server is trivial (kill + re-run).
+- Adding live-reload (polling `INFORMATION_SCHEMA` on a timer or on each request) adds complexity and connection churn with no clear v1 payoff.
+
+The server logs its introspection timestamp at startup so users can verify freshness:
+```
+INFO  schema introspected at 2026-08-08T15:30:00Z  tables=4 columns=14
+```
+
+### 2.6 MCP Exposition
 
 **Transport**: stdio (JSON-RPC over stdin/stdout). This is the standard for local MCP servers — no HTTP, no SSE for v1.
 
@@ -285,7 +302,7 @@ Returns the entire merged model as JSON:
 | Table not found in DB | MCP error: `"table 'xyz' not found"` |
 | Column not found in table | MCP error: `"column 'xyz' not found in table 'abc'"` |
 
-### 2.6 Package Layout — `/server`
+### 2.7 Package Layout — `/server`
 
 ```
 server/
@@ -318,10 +335,16 @@ on:
 PR opened/updated (migration files changed)
   │
   ▼
-Checkout base branch → run migrations → dump "before" schema
+Spin up one ephemeral MySQL container
   │
   ▼
-Checkout PR branch → run migrations → dump "after" schema
+Apply base-branch migrations → snapshot "before" schema
+  │
+  ▼
+Apply PR-branch migrations on top → snapshot "after" schema
+  │
+  ▼
+Tear down container
   │
   ▼
 Diff before vs after (structured, not text)
@@ -336,30 +359,31 @@ Cross-reference: which diff'd columns are documented or sensitive?
 Build + post PR comment via GitHub API
 ```
 
-### 3.2 Snapshot Strategy: Ephemeral DB via `docker run`
+### 3.2 Snapshot Strategy: Single Ephemeral Container, Migrate-Forward
 
-The Action spins up a throwaway MySQL container, runs migrations, and queries the schema. Repeat for base and PR branch.
+One throwaway MySQL container, two snapshots — migrate to base tip, snapshot, then continue migrating to PR tip, snapshot, tear down.
 
 ```
-1. docker run -d --name mysql-before mysql:8.0 -e MYSQL_ROOT_PASSWORD=root -e MYSQL_DATABASE=cosmo_db
+1. docker run -d --name mysql-guard mysql:8.0 -e MYSQL_ROOT_PASSWORD=root -e MYSQL_DATABASE=cosmo_db
 2. checkout base branch migrations
-3. apply migrations (golang-migrate/migrate CLI)
-4. query INFORMATION_SCHEMA.COLUMNS → before snapshot
-5. stop + remove container
-
-6. docker run -d --name mysql-after mysql:8.0 -e MYSQL_ROOT_PASSWORD=root -e MYSQL_DATABASE=cosmo_db
-7. checkout PR branch migrations
-8. apply migrations
-9. query INFORMATION_SCHEMA.COLUMNS → after snapshot
-10. stop + remove container
+3. apply base migrations (golang-migrate/migrate CLI)
+4. query INFORMATION_SCHEMA.COLUMNS → "before" snapshot (in-memory)
+5. checkout PR branch migrations
+6. apply only the NEW migrations (migrate continues forward from base tip)
+7. query INFORMATION_SCHEMA.COLUMNS → "after" snapshot (in-memory)
+8. stop + remove container
 ```
+
+**Why single-container migrate-forward instead of two containers:**
+- MySQL container startup takes ~10-15s. One container = one startup instead of two → **~10-15s saved per PR**.
+- Migrations are sequential by definition — applying base then PR-only on top is exactly what happens in a real deploy.
+- Same correctness: both snapshots come from `INFORMATION_SCHEMA` against a live DB.
 
 **Why this approach over diffing migration SQL files directly:**
 - Migration files are *imperative* (ALTER, DROP, etc.) — diffing them tells you *what commands ran*, not *what the schema looks like after*.
 - Querying `INFORMATION_SCHEMA` against the live ephemeral DB gives the *declarative* final state, which is what we actually need to compare.
-- Ephemeral containers are cheap and reproducible in CI. No persistent state.
 
-**Trade-off**: Adds ~20-25s to CI for MySQL container startup + migration. Acceptable for a PR-triggered check.
+**Trade-off**: Adds ~15-20s total to CI (one container lifecycle + two migration passes). Acceptable for a PR-triggered check.
 
 ### 3.3 Schema Diff
 
