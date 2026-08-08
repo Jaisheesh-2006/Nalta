@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"math/big"
 	"net"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -16,7 +17,7 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/mysql"
-	_ "github.com/golang-migrate/migrate/v4/source/file"
+	"github.com/golang-migrate/migrate/v4/source/iofs"
 )
 
 // SnapshotColumn represents a column captured from INFORMATION_SCHEMA.
@@ -251,16 +252,23 @@ func waitForMySQL(dsn string, timeout time.Duration) error {
 // treated as success — it's the expected case when the before-migrations
 // and after-migrations overlap.
 func applyMigrations(dsn, migrationsPath string) error {
-	sourceURL, err := migrationsSourceURL(migrationsPath)
+	absPath, err := filepath.Abs(migrationsPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("resolving migrations path: %w", err)
+	}
+
+	// Use os.DirFS + iofs driver — avoids file:// URL Windows path issues.
+	fsys := os.DirFS(absPath)
+	sourceDriver, err := iofs.New(fsys, ".")
+	if err != nil {
+		return fmt.Errorf("creating iofs source: %w", err)
 	}
 
 	// golang-migrate's MySQL driver expects "mysql://" prefix and
 	// multiStatements=true for migration files with multiple statements.
 	migrateDSN := buildMigrateDSN(dsn)
 
-	m, err := migrate.New(sourceURL, migrateDSN)
+	m, err := migrate.NewWithSourceInstance("iofs", sourceDriver, migrateDSN)
 	if err != nil {
 		return fmt.Errorf("creating migrate instance: %w", err)
 	}
