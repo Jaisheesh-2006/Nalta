@@ -1,0 +1,41 @@
+name: Eval Harness
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: cosmo_db
+        ports:
+          - 3306:3306
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Build MCP server
+        run: go build -o schema-mcp ./server
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install eval dependencies
+        run: pip install -r eval/requirements.txt
+
+      - name: Run eval suite
+        run: pytest eval/ -v
+        env:
+          DSN: "root:root@tcp(localhost:3306)/cosmo_db"
+          EVAL_MODEL: "gpt-4o"
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}

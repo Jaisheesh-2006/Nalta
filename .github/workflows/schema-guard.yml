@@ -1,0 +1,27 @@
+name: Schema Guard
+
+on:
+  pull_request:
+    paths:
+      - 'migrations/**'
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Build schema-guard
+        run: go build -o schema-guard ./action
+
+      - name: Run schema guard
+        run: |
+          ./schema-guard \
+            --context ./context.yaml \
+            --dry-run

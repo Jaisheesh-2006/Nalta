@@ -1,0 +1,16 @@
+name: 'Schema Guard'
+description: 'Detect schema changes in PRs and warn about documented/sensitive column impacts.'
+inputs:
+  context-path:
+    description: 'Path to context.yaml'
+    required: false
+    default: './context.yaml'
+  dsn:
+    description: 'MySQL DSN for ephemeral DB'
+    required: true
+  github-token:
+    description: 'GitHub token for posting PR comments'
+    required: true
+runs:
+  using: 'docker'
+  image: 'Dockerfile'
