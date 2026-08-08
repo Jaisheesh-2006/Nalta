@@ -1,0 +1,21 @@
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: cosmo
+      MYSQL_DATABASE:      cosmo_db
+      MYSQL_USER:          cosmo
+      MYSQL_PASSWORD:      cosmo
+    ports:
+      - "3306:3306"
+    volumes:
+      # Auto-runs migration SQL files in alphabetical order on first start
+      - ./migrations:/docker-entrypoint-initdb.d
+    command: >
+      --local-infile=1
+      --secure-file-priv=""
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 2s
+      timeout: 5s
+      retries: 15

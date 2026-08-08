@@ -1,0 +1,4 @@
+# Synthea downloaded raw data — not tracked in git
+# Re-generate with: ./load_synthea.sh
+csv/
+*.zip
