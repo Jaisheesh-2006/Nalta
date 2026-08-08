@@ -1,0 +1,14 @@
+{
+  "table": "ingredients",
+  "column": {
+    "name": "toxicity_class",
+    "data_type": "text",
+    "nullable": true,
+    "default_value": "",
+    "references": null,
+    "description": "Internal safety tier: 'safe', 'restricted', or 'banned'.",
+    "sensitive": true,
+    "pii": false,
+    "documented": true
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "tables": [
+    {
+      "name": "ingredients",
+      "description": "Raw chemical or natural ingredients used in product formulas.",
+      "sensitive": false,
+      "columns": [
+        {
+          "name": "id",
+          "data_type": "integer",
+          "nullable": false,
+          "default_value": "auto_increment",
+          "references": null,
+          "description": "Auto-generated primary key.",
+          "sensitive": false,
+          "pii": false,
+          "documented": true
+        },
+        {
+          "name": "toxicity_class",
+          "data_type": "text",
+          "nullable": true,
+          "default_value": "",
+          "references": null,
+          "description": "Internal safety tier: 'safe', 'restricted', or 'banned'.",
+          "sensitive": true,
+          "pii": false,
+          "documented": true
+        }
+      ]
+    },
+    {
+      "name": "products",
+      "description": "Finished cosmetic products available for sale.",
+      "sensitive": false,
+      "columns": [
+        {
+          "name": "id",
+          "data_type": "integer",
+          "nullable": false,
+          "default_value": "auto_increment",
+          "references": null,
+          "description": "Auto-generated primary key.",
+          "sensitive": false,
+          "pii": false,
+          "documented": true
+        }
+      ]
+    }
+  ]
+}

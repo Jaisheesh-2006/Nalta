@@ -36,6 +36,11 @@ export DSN="cosmo:cosmo@tcp(localhost:3306)/cosmo_db"
 └── .github/          # CI workflows
 ```
 
+## Confirmations
+
+- Env var and flag precedence: `--dsn` and `--context` flags are implemented and fall back to `DSN` and `CONTEXT_FILE` env vars; flags take precedence. See `server/config.go`.
+- MCP SDK: the project uses `mark3labs/mcp-go` (listed in `go.mod`) and the MCP server is implemented in `server/mcp.go`.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
