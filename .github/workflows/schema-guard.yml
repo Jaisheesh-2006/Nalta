@@ -3,6 +3,7 @@ name: Schema Guard
 on:
   pull_request:
     paths:
+      - 'examples/synthea/migrations/**'
       - 'migrations/**'
 
 jobs:
@@ -20,8 +21,21 @@ jobs:
       - name: Build schema-guard
         run: go build -o schema-guard ./action
 
+      # Prepare before-migrations from the base branch
+      - name: Checkout base branch migrations
+        run: |
+          mkdir -p /tmp/base-migrations
+          git show origin/${{ github.base_ref }}:examples/synthea/migrations/ > /dev/null 2>&1 && \
+            git archive origin/${{ github.base_ref }} -- examples/synthea/migrations/ | \
+            tar -x --strip-components=3 -C /tmp/base-migrations || \
+            echo "No base migrations found — treating as greenfield"
+
       - name: Run schema guard
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           ./schema-guard \
-            --context ./context.yaml \
+            --before-migrations /tmp/base-migrations \
+            --after-migrations ./examples/synthea/migrations \
+            --context ./examples/synthea/context.yaml \
             --dry-run

@@ -8,9 +8,6 @@ schema-guard.exe
 *.test
 *.out
 
-# Test artifacts (ephemeral directories created during local testing)
-examples/synthea/test-pr-migrations/
-
 # OS / editor files
 .DS_Store
 Thumbs.db
