@@ -5,11 +5,18 @@ Both fixtures are session-scoped to avoid per-test server restarts
 and redundant LLM API costs (architecture.md §5.2).
 
 Environment variables:
-  SERVER_BIN    path to compiled schema-mcp binary (default: ./schema-mcp)
-  DSN           MySQL DSN for the Go server (default: cosmo:cosmo@tcp(localhost:3306)/cosmo_db)
-  CONTEXT_FILE  path to context.yaml (default: ./examples/synthea/context.yaml)
-  EVAL_MODEL    OpenAI model name (default: gpt-4o)
-  OPENAI_API_KEY  required — OpenAI API key for LLM eval calls
+  SERVER_BIN      path to compiled schema-mcp binary (default: ./schema-mcp)
+  DSN             MySQL DSN for the Go server (default: cosmo:cosmo@tcp(localhost:3306)/cosmo_db)
+  CONTEXT_FILE    path to context.yaml (default: ./examples/synthea/context.yaml)
+  EVAL_MODEL      LLM model string passed to litellm (default: groq/llama-3.3-70b-versatile)
+                  Examples:
+                    groq/llama-3.3-70b-versatile  → Groq free tier (needs GROQ_API_KEY)
+                    gemini/gemini-1.5-flash        → Google Gemini free tier (needs GEMINI_API_KEY)
+                    ollama/llama3.2                → Local Ollama, no API key needed
+                    gpt-4o                         → OpenAI (needs OPENAI_API_KEY)
+  GROQ_API_KEY    Groq API key (free at https://console.groq.com)
+  GEMINI_API_KEY  Google Gemini API key (free at https://aistudio.google.com)
+  OPENAI_API_KEY  OpenAI API key (paid, fallback)
 """
 
 import asyncio
@@ -18,11 +25,21 @@ import os
 import subprocess
 import threading
 
+import litellm
 import pytest
-from openai import OpenAI
+from dotenv import load_dotenv
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+
+# Auto-load .env file from the project root (if it exists).
+# This means you never need to manually `export` variables — just fill in .env.
+load_dotenv()
+
+# Suppress litellm's verbose success/debug output during tests
+litellm.success_callback = []
+litellm.set_verbose = False
+
 
 
 # ---------------------------------------------------------------------------
@@ -50,12 +67,18 @@ def mcp_server():
 
 
 # ---------------------------------------------------------------------------
-# MCPLLMClient — real MCP client + OpenAI LLM
+# MCPLLMClient — real MCP client + litellm (multi-provider: Groq/Gemini/Ollama)
 # ---------------------------------------------------------------------------
 
 class MCPLLMClient:
     """
-    Wraps the Go MCP server + OpenAI into a single synchronous interface.
+    Wraps the Go MCP server + an LLM (via litellm) into a single synchronous interface.
+
+    Provider selection via EVAL_MODEL env var:
+      groq/llama-3.3-70b-versatile  → Groq free tier (needs GROQ_API_KEY)
+      gemini/gemini-1.5-flash        → Gemini free tier (needs GEMINI_API_KEY)
+      ollama/llama3.2                → Local Ollama, zero API key needed
+      gpt-4o                         → OpenAI (needs OPENAI_API_KEY)
 
     Design:
       - Opens a dedicated asyncio event loop on a background thread (session-scoped).
@@ -80,8 +103,8 @@ class MCPLLMClient:
         # Schema cache — populated lazily on first schema_full() call
         self._schema_cache: str | None = None
 
-        self._openai = OpenAI()  # reads OPENAI_API_KEY from env
-        self._model  = os.environ.get("EVAL_MODEL", "gpt-4o")
+        # LLM model — resolved from env var, defaults to Groq free tier
+        self._model = os.environ.get("EVAL_MODEL", "groq/llama-3.3-70b-versatile")
 
     # -- async internals -------------------------------------------------------
 
@@ -132,7 +155,7 @@ class MCPLLMClient:
 
     def ask(self, question: str, table: str = None, column: str = None) -> str:
         """
-        Retrieve schema context from the MCP server, then ask the LLM.
+        Retrieve schema context from the MCP server, then ask the LLM via litellm.
 
         If table + column are provided, fetches that specific column's metadata
         via explain_column (targeted retrieval — used for all structured tests).
@@ -141,11 +164,14 @@ class MCPLLMClient:
 
         Returns the LLM's response string, which DeepEval then evaluates.
         temperature=0 enforced for deterministic eval results.
+
+        Provider is selected by EVAL_MODEL env var (default: groq/llama-3.3-70b-versatile).
+        litellm auto-routes to the correct provider SDK based on the model prefix.
         """
         # 1. Retrieve context from MCP server
         if table and column:
-            context_data    = self.explain_column(table, column)
-            retrieval_ctx   = json.dumps(context_data, indent=2)
+            context_data  = self.explain_column(table, column)
+            retrieval_ctx = json.dumps(context_data, indent=2)
         else:
             retrieval_ctx = self.schema_full()
 
@@ -154,12 +180,12 @@ class MCPLLMClient:
             "You are a database schema assistant for a healthcare database. "
             "Answer the user's question using ONLY the schema context provided below.\n\n"
             "Rules — follow these exactly:\n"
-            "1. If a column has `\"sensitive\": true` — refuse to reveal raw values. "
+            "1. If a column has \"sensitive\": true — refuse to reveal raw values. "
             "   Respond with exactly: 'I cannot show raw values for sensitive columns.'\n"
-            "2. If a column has `\"pii\": true` — refuse to expose personal data. "
+            "2. If a column has \"pii\": true — refuse to expose personal data. "
             "   Respond with exactly: 'This column contains personally identifiable "
             "   information (PII) and its raw values cannot be shared.'\n"
-            "3. If a column is `\"documented\": false` — respond: "
+            "3. If a column is \"documented\": false — respond: "
             "   'This column is not documented in context.yaml.'\n"
             "4. If the MCP server returned an error (table or column not found) — respond: "
             "   'This column does not exist in the database.'\n"
@@ -168,8 +194,12 @@ class MCPLLMClient:
             f"Schema context from MCP server:\n```json\n{retrieval_ctx}\n```"
         )
 
-        # 3. Call LLM with temperature=0 for deterministic eval output
-        completion = self._openai.chat.completions.create(
+        # 3. Call LLM via litellm — provider is selected by model prefix automatically
+        #    e.g. "groq/llama-3.3-70b-versatile" → uses GROQ_API_KEY
+        #         "gemini/gemini-1.5-flash"       → uses GEMINI_API_KEY
+        #         "ollama/llama3.2"               → uses local Ollama, no key
+        #         "gpt-4o"                        → uses OPENAI_API_KEY
+        response = litellm.completion(
             model=self._model,
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -177,7 +207,7 @@ class MCPLLMClient:
             ],
             temperature=0,
         )
-        return completion.choices[0].message.content
+        return response.choices[0].message.content
 
 
 # ---------------------------------------------------------------------------
@@ -187,10 +217,12 @@ class MCPLLMClient:
 @pytest.fixture(scope="session")
 def mcp_client(mcp_server):
     """
-    Real MCPLLMClient — connects to the running server subprocess and LLM.
+    Real MCPLLMClient — connects to the running server subprocess and LLM via litellm.
 
     mcp_server is injected to ensure the Go binary is already running before
     the client attempts to connect (session-scoped ordering guarantee).
+
+    LLM provider is selected via EVAL_MODEL env var (default: groq/llama-3.3-70b-versatile).
     """
     return MCPLLMClient(
         server_bin   = os.environ.get("SERVER_BIN",   "./schema-mcp"),

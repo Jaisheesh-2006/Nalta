@@ -30,7 +30,11 @@ jobs:
             tar -x --strip-components=3 -C /tmp/base-migrations || \
             echo "No base migrations found — treating as greenfield"
 
-      - name: Run schema guard
+      # NOTE: --dry-run prints the diff report to stdout instead of posting a GitHub PR comment.
+      # This is intentional for CI validation — it verifies the diff logic runs without error.
+      # To enable live PR commenting, remove --dry-run and ensure GITHUB_TOKEN has write:pull-requests scope.
+      # See docs/ci_secrets.md for the full secret configuration guide.
+      - name: Run schema guard (dry-run)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

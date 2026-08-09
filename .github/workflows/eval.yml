@@ -31,7 +31,7 @@ jobs:
         with:
           go-version-file: 'go.mod'
 
-      # Apply all 16 Synthea up-migrations so the server has a real schema to introspect.
+      # Apply all Synthea up-migrations so the server has a real schema to introspect.
       # Without this step, MySQL starts empty and schema://full returns [].
       - name: Apply Synthea migrations
         run: |
@@ -51,10 +51,22 @@ jobs:
         run: pip install -r eval/requirements.txt
 
       - name: Run eval suite
-        run: pytest eval/ -v
+        run: pytest eval/ -v --timeout=60
         env:
           SERVER_BIN:     "./schema-mcp"
           DSN:            "cosmo:${{ secrets.MYSQL_PASSWORD || 'ci-cosmo-only' }}@tcp(127.0.0.1:3306)/cosmo_db"
           CONTEXT_FILE:   "./examples/synthea/context.yaml"
-          EVAL_MODEL:     "gpt-4o"
+          # --- LLM provider selection ---
+          # Default: Groq free tier (set GROQ_API_KEY secret in repo settings).
+          # To switch provider, change EVAL_MODEL:
+          #   groq/llama-3.3-70b-versatile  → Groq (free, fast)
+          #   gemini/gemini-1.5-flash        → Google Gemini (free tier)
+          #   gpt-4o                         → OpenAI (paid)
+          EVAL_MODEL:     "groq/llama-3.3-70b-versatile"
+          GROQ_API_KEY:   ${{ secrets.GROQ_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          # Suppress DeepEval telemetry (phone-home) in CI
+          DEEPEVAL_TELEMETRY_OPT_OUT: "YES"
+          # Ensure Python output is not buffered — real-time CI log streaming
+          PYTHONUNBUFFERED: "1"
