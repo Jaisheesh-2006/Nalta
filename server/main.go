@@ -3,8 +3,11 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 
 	_ "github.com/go-sql-driver/mysql"
 
@@ -50,6 +53,40 @@ func main() {
 	// Merge DB schema with context.yaml
 	merged := Merge(dbSchema, ctx)
 	slog.Info("schema merged", "tables", len(merged))
+
+	// Dump column if requested
+	if cfg.DumpColumn != "" {
+		parts := strings.SplitN(cfg.DumpColumn, ":", 2)
+		if len(parts) != 2 {
+			slog.Error("invalid --dump-column format, expected table:column", "val", cfg.DumpColumn)
+			os.Exit(1)
+		}
+		out, err := ExplainColumnJSON(merged, parts[0], parts[1])
+		if err != nil {
+			slog.Error("failed to explain column", "error", err)
+			os.Exit(1)
+		}
+		fmt.Println(out)
+		os.Exit(0)
+	}
+
+	// Dump schema if requested
+	if cfg.DumpSchema != "" {
+		b, err := json.MarshalIndent(merged, "", "  ")
+		if err != nil {
+			slog.Error("failed to marshal merged schema", "error", err)
+			os.Exit(1)
+		}
+		if cfg.DumpSchema == "-" {
+			fmt.Println(string(b))
+		} else {
+			if err := os.WriteFile(cfg.DumpSchema, b, 0644); err != nil {
+				slog.Error("failed to write schema", "error", err, "file", cfg.DumpSchema)
+				os.Exit(1)
+			}
+		}
+		os.Exit(0)
+	}
 
 	// Start MCP server
 	if err := StartMCPServer(merged); err != nil {
