@@ -61,7 +61,7 @@ func TestIntegration_IntrospectAndMergeAgainstExamples(t *testing.T) {
     defer db.Close()
 
     // Run server to dump schema to stdout
-    srv := exec.Command("./schema-mcp", "--dsn", dsn, "--context", filepath.Join("examples", "synthea", "context.yaml"), "--dump-schema", "-")
+    srv := exec.Command("./schema-mcp", "--dsn", dsn, "--context", filepath.Join("examples", "context.yaml"), "--dump-schema", "-")
     srv.Dir = projectRoot
     stdout, err := srv.StdoutPipe()
     if err != nil {
@@ -100,7 +100,7 @@ func TestIntegration_IntrospectAndMergeAgainstExamples(t *testing.T) {
     }
 
     // Now test explain_column via dump-column
-    srv2 := exec.Command("./schema-mcp", "--dsn", dsn, "--context", filepath.Join("examples", "synthea", "context.yaml"), "--dump-column", "patients:SSN")
+    srv2 := exec.Command("./schema-mcp", "--dsn", dsn, "--context", filepath.Join("examples", "context.yaml"), "--dump-column", "ingredients:toxicity_class")
     srv2.Dir = projectRoot
     out2, err := srv2.Output()
     if err != nil {
