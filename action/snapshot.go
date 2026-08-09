@@ -371,7 +371,10 @@ func findFreePort() (int, error) {
 // generateContainerName creates a unique container name to avoid
 // collisions when multiple guard runs happen concurrently.
 func generateContainerName() string {
-	n, _ := rand.Int(rand.Reader, big.NewInt(99999))
+	n, err := rand.Int(rand.Reader, big.NewInt(99999))
+	if err != nil {
+		return fmt.Sprintf("schema-guard-%d", time.Now().UnixNano())
+	}
 	return fmt.Sprintf("schema-guard-%05d", n.Int64())
 }
 
