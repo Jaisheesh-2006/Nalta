@@ -101,7 +101,7 @@ func snapshotWithEphemeralContainer(cfg *ActionConfig) (before, after []Snapshot
 	defer func() {
 		if cleanupErr := stopEphemeralMySQL(container.id); cleanupErr != nil {
 			slog.Warn("failed to clean up ephemeral container",
-				"container", container.id[:12], "error", cleanupErr)
+				"container", container.id, "error", cleanupErr)
 		}
 	}()
 
