@@ -1,4 +1,4 @@
-version: "1.0"
+version: "1"
 tables:
   ingredients:
     description: "Raw chemical or natural ingredients used in product formulas."
