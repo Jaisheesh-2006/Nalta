@@ -6,11 +6,19 @@ inputs:
     required: false
     default: './context.yaml'
   dsn:
-    description: 'MySQL DSN for ephemeral DB'
-    required: true
+    description: 'MySQL DSN. If omitted, an ephemeral MySQL container is used.'
+    required: false
   github-token:
     description: 'GitHub token for posting PR comments'
     required: true
+  before-migrations:
+    description: 'Path to base-branch migrations directory'
+    required: false
+    default: ''
+  after-migrations:
+    description: 'Path to PR-branch migrations directory'
+    required: false
+    default: ''
 runs:
   using: 'docker'
   image: 'Dockerfile'
