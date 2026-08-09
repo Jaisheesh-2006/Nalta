@@ -12,16 +12,33 @@ jobs:
       mysql:
         image: mysql:8.0
         env:
-          MYSQL_ROOT_PASSWORD: root
-          MYSQL_DATABASE: cosmo_db
+          MYSQL_ROOT_PASSWORD: ${{ secrets.MYSQL_ROOT_PASSWORD || 'ci-root-only' }}
+          MYSQL_DATABASE:      cosmo_db
+          MYSQL_USER:          cosmo
+          MYSQL_PASSWORD:      ${{ secrets.MYSQL_PASSWORD || 'ci-cosmo-only' }}
         ports:
           - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost"
+          --health-interval=2s
+          --health-timeout=5s
+          --health-retries=15
+
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version-file: 'go.mod'
+
+      # Apply all 16 Synthea up-migrations so the server has a real schema to introspect.
+      # Without this step, MySQL starts empty and schema://full returns [].
+      - name: Apply Synthea migrations
+        run: |
+          for f in $(ls examples/synthea/migrations/*.up.sql | sort); do
+            echo "→ applying $f"
+            mysql -h 127.0.0.1 -P 3306 -uroot -p"${{ secrets.MYSQL_ROOT_PASSWORD || 'ci-root-only' }}" cosmo_db < "$f"
+          done
 
       - name: Build MCP server
         run: go build -o schema-mcp ./server
@@ -36,6 +53,8 @@ jobs:
       - name: Run eval suite
         run: pytest eval/ -v
         env:
-          DSN: "root:root@tcp(localhost:3306)/cosmo_db"
-          EVAL_MODEL: "gpt-4o"
+          SERVER_BIN:     "./schema-mcp"
+          DSN:            "cosmo:${{ secrets.MYSQL_PASSWORD || 'ci-cosmo-only' }}@tcp(127.0.0.1:3306)/cosmo_db"
+          CONTEXT_FILE:   "./examples/synthea/context.yaml"
+          EVAL_MODEL:     "gpt-4o"
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}

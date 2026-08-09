@@ -1,1 +1,22 @@
-IMPLEMENTATION.md
+# Compiled binaries
+schema-mcp
+schema-mcp.exe
+schema-guard
+schema-guard.exe
+
+# Go build cache
+*.test
+*.out
+
+# OS / editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment files
+.env
+.env.local
+

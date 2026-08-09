@@ -3,6 +3,7 @@ name: Schema Guard
 on:
   pull_request:
     paths:
+      - 'examples/synthea/migrations/**'
       - 'migrations/**'
 
 jobs:
@@ -15,13 +16,26 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version-file: go.mod
 
       - name: Build schema-guard
         run: go build -o schema-guard ./action
 
+      # Prepare before-migrations from the base branch
+      - name: Checkout base branch migrations
+        run: |
+          mkdir -p /tmp/base-migrations
+          git cat-file -e "origin/${{ github.base_ref }}:examples/synthea/migrations" 2>/dev/null && \
+            git archive origin/${{ github.base_ref }} -- examples/synthea/migrations/ | \
+            tar -x --strip-components=3 -C /tmp/base-migrations || \
+            echo "No base migrations found — treating as greenfield"
+
       - name: Run schema guard
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           ./schema-guard \
-            --context ./context.yaml \
+            --before-migrations /tmp/base-migrations \
+            --after-migrations ./examples/synthea/migrations \
+            --context ./examples/synthea/context.yaml \
             --dry-run

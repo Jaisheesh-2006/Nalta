@@ -99,6 +99,110 @@ func TestFormatComment_NoIssues(t *testing.T) {
 	}
 }
 
+func TestFormatComment_PIIBadge(t *testing.T) {
+	findings := []Finding{{
+		Change:   "DROPPED",
+		Table:    "users",
+		Column:   "email",
+		Severity: SeverityWarning,
+		Reason:   "PII column removed — verify compliance implications.",
+		PII:      true,
+	}}
+	comment := FormatComment(findings, SchemaDiff{})
+	if !contains(comment, "🔒") {
+		t.Error("expected PII badge 🔒 in comment")
+	}
+	if !contains(comment, "🔒 **PII column removed") {
+		t.Error("expected PII badge before the reason text")
+	}
+}
+
+func TestFormatComment_SensitiveAndPII(t *testing.T) {
+	findings := []Finding{{
+		Change:    "TYPE CHANGED",
+		Table:     "employees",
+		Column:    "salary",
+		Severity:  SeverityWarning,
+		Reason:    "Sensitive PII column modified.",
+		Sensitive: true,
+		PII:       true,
+	}}
+	comment := FormatComment(findings, SchemaDiff{})
+	if !contains(comment, "🔒") {
+		t.Error("expected PII badge for dual-flagged column")
+	}
+}
+
+func TestFormatComment_SensitiveWithoutPII_NoBadge(t *testing.T) {
+	findings := []Finding{{
+		Change:    "DROPPED",
+		Table:     "ingredients",
+		Column:    "toxicity_class",
+		Severity:  SeverityWarning,
+		Reason:    "Sensitive column removed.",
+		Sensitive: true,
+		PII:       false,
+	}}
+	comment := FormatComment(findings, SchemaDiff{})
+	if contains(comment, "🔒") {
+		t.Error("sensitive-only column should NOT have PII badge")
+	}
+}
+
+func TestFormatComment_ContainsMarker(t *testing.T) {
+	// The marker must be present in ALL comment variants for dedup to work.
+
+	// No-issues variant
+	clean := FormatComment(nil, SchemaDiff{})
+	if !contains(clean, commentMarker) {
+		t.Error("no-issues comment missing dedup marker")
+	}
+
+	// Warning variant
+	withWarning := FormatComment([]Finding{{
+		Change:   "DROPPED",
+		Table:    "t",
+		Column:   "c",
+		Severity: SeverityWarning,
+		Reason:   "test",
+	}}, SchemaDiff{})
+	if !contains(withWarning, commentMarker) {
+		t.Error("warning comment missing dedup marker")
+	}
+
+	// Info variant
+	withInfo := FormatComment([]Finding{{
+		Change:   "ADDED",
+		Table:    "t",
+		Column:   "c",
+		Severity: SeverityInfo,
+		Reason:   "test",
+	}}, SchemaDiff{})
+	if !contains(withInfo, commentMarker) {
+		t.Error("info comment missing dedup marker")
+	}
+}
+
+func TestParseRepo_Valid(t *testing.T) {
+	owner, repo, err := parseRepo("octocat/hello-world")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if owner != "octocat" {
+		t.Errorf("expected owner 'octocat', got %q", owner)
+	}
+	if repo != "hello-world" {
+		t.Errorf("expected repo 'hello-world', got %q", repo)
+	}
+}
+
+func TestParseRepo_Invalid(t *testing.T) {
+	_, _, err := parseRepo("noslash")
+	if err == nil {
+		t.Fatal("expected error for repo without slash")
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && searchSubstr(s, substr)
 }
@@ -111,3 +215,4 @@ func searchSubstr(s, substr string) bool {
 	}
 	return false
 }
+

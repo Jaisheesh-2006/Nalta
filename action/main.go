@@ -15,6 +15,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Validate required fields for the current mode
+	if err := cfg.Validate(); err != nil {
+		slog.Error("invalid config", "error", err)
+		os.Exit(1)
+	}
+
 	// Load context.yaml
 	ctx, err := contextfile.Load(cfg.ContextFile)
 	if err != nil {
@@ -50,8 +56,8 @@ func main() {
 		return
 	}
 
-	// Post to GitHub
-	if err := PostComment(cfg.GitHubToken, cfg.Repo, cfg.PRNumber, comment); err != nil {
+	// Post to GitHub (updates existing comment if one exists)
+	if err := PostOrUpdateComment(cfg.GitHubToken, cfg.Repo, cfg.PRNumber, comment); err != nil {
 		slog.Error("failed to post comment", "error", err)
 		os.Exit(1)
 	}
