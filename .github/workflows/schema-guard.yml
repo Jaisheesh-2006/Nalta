@@ -25,7 +25,7 @@ jobs:
       - name: Checkout base branch migrations
         run: |
           mkdir -p /tmp/base-migrations
-          git show origin/${{ github.base_ref }}:examples/synthea/migrations/ > /dev/null 2>&1 && \
+          git cat-file -e "origin/${{ github.base_ref }}:examples/synthea/migrations" 2>/dev/null && \
             git archive origin/${{ github.base_ref }} -- examples/synthea/migrations/ | \
             tar -x --strip-components=3 -C /tmp/base-migrations || \
             echo "No base migrations found — treating as greenfield"
