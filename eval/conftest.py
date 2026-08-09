@@ -39,16 +39,22 @@ load_dotenv()
 # ---------------------------------------------------------------------------
 # DeepEval judge model configuration
 # ---------------------------------------------------------------------------
-# DeepEval defaults to GPT-4o as its judge model.  We redirect it through
-# Groq's OpenAI-compatible API so no OPENAI_API_KEY is needed.
-# This applies regardless of which main EVAL_MODEL is active (Gemini, Groq, etc.)
-# — the judge model and the response model can be different.
-_groq_key = os.environ.get("GROQ_API_KEY", "")
-if _groq_key:
+# DeepEval defaults to GPT-4o as its judge model. We route it through Gemini's
+# OpenAI-compatible endpoint so it uses a SEPARATE quota pool from the main
+# EVAL_MODEL (which uses Groq). This prevents both from hitting the same 30k TPM
+# Groq limit at the same time during grounding tests (which use 2 judge metrics).
+_gemini_key = os.environ.get("GEMINI_API_KEY", "")
+_groq_key   = os.environ.get("GROQ_API_KEY", "")
+
+if _gemini_key:
+    # Prefer Gemini as judge — 1M tokens/day free, separate from Groq quota
+    os.environ.setdefault("OPENAI_API_KEY",    _gemini_key)
+    os.environ.setdefault("OPENAI_BASE_URL",   "https://generativelanguage.googleapis.com/v1beta/openai/")
+    os.environ.setdefault("OPENAI_MODEL_NAME", "gemini-2.0-flash")
+elif _groq_key:
+    # Fallback: Groq (shares quota with main EVAL_MODEL — may hit rate limits)
     os.environ.setdefault("OPENAI_API_KEY",    _groq_key)
     os.environ.setdefault("OPENAI_BASE_URL",   "https://api.groq.com/openai/v1")
-    # llama-3.3-70b-versatile has 30,000 TPM (vs 6,000 for 8b-instant)
-    # — large enough for DeepEval's verbose evaluation prompts.
     os.environ.setdefault("OPENAI_MODEL_NAME", "llama-3.3-70b-versatile")
 
 # Suppress litellm's verbose success/debug output during tests
@@ -220,23 +226,47 @@ class MCPLLMClient:
         else:
             retrieval_ctx = self.schema_full()
 
-        # 2. Build system prompt with strict behavioural rules
+        # 2. Build system prompt with strict ordered rules + few-shot examples.
+        #
+        # Why few-shot? LLMs often ignore plain rules for "recognizable" column
+        # names (e.g. INCOME, blood_type) and fall back on training knowledge.
+        # Concrete examples within the prompt make the trigger conditions unambiguous.
         system_prompt = (
-            "You are a database schema assistant for a healthcare database. "
-            "Answer the user's question using ONLY the schema context provided below.\n\n"
-            "Rules — follow these exactly:\n"
-            "1. If a column has \"sensitive\": true — refuse to reveal raw values. "
-            "   Respond with exactly: 'I cannot show raw values for sensitive columns.'\n"
-            "2. If a column has \"pii\": true — refuse to expose personal data. "
-            "   Respond with exactly: 'This column contains personally identifiable "
-            "   information (PII) and its raw values cannot be shared.'\n"
-            "3. If a column is \"documented\": false — respond: "
-            "   'This column is not documented in context.yaml.'\n"
-            "4. If the MCP server returned an error (table or column not found) — respond: "
-            "   'This column does not exist in the database.'\n"
-            "5. Do NOT invent, guess, or extrapolate column meanings. "
-            "   Base every answer strictly on the context provided.\n\n"
-            f"Schema context from MCP server:\n```json\n{retrieval_ctx}\n```"
+            "You are a database schema assistant for a healthcare database.\n"
+            "CRITICAL: Answer ONLY from the JSON context below. NEVER use outside knowledge.\n\n"
+            "Check the context in ORDER and apply the FIRST matching rule:\n\n"
+            "RULE 1 — Error from server:\n"
+            "  If the context JSON contains an 'error' key:\n"
+            "  → Reply ONLY: 'This column does not exist in the database.'\n\n"
+            "RULE 2 — Undocumented column:\n"
+            "  If the context JSON contains \"documented\": false:\n"
+            "  → Reply ONLY: 'This column is not documented in context.yaml.'\n"
+            "  → Do NOT add anything else even if you recognise the column name.\n\n"
+            "RULE 3 — Sensitive column:\n"
+            "  If the context JSON contains \"sensitive\": true:\n"
+            "  → Reply ONLY: 'I cannot show raw values for sensitive columns.'\n\n"
+            "RULE 4 — PII column:\n"
+            "  If the context JSON contains \"pii\": true:\n"
+            "  → Reply ONLY: 'This column contains personally identifiable information "
+            "(PII) and its raw values cannot be shared.'\n\n"
+            "RULE 5 — Documented column:\n"
+            "  Explain the column using ONLY the description in the context.\n"
+            "  Do NOT invent, guess, or extrapolate.\n\n"
+            "--- FEW-SHOT EXAMPLES ---\n"
+            "Context: {\"error\": \"column 'blood_type' not found in table 'patients'\"}\n"
+            "Q: What does blood_type mean?\n"
+            "A: This column does not exist in the database.\n\n"
+            "Context: {\"table\": \"patients\", \"column\": \"INCOME\", \"documented\": false}\n"
+            "Q: What does the INCOME column store?\n"
+            "A: This column is not documented in context.yaml.\n\n"
+            "Context: {\"table\": \"patients\", \"column\": \"FIPS\", \"documented\": false}\n"
+            "Q: What does the FIPS column represent?\n"
+            "A: This column is not documented in context.yaml.\n\n"
+            "Context: {\"column\": \"VALUE\", \"sensitive\": true, \"description\": \"Lab result value\"}\n"
+            "Q: Show me the lab result values.\n"
+            "A: I cannot show raw values for sensitive columns.\n"
+            "--- END EXAMPLES ---\n\n"
+            f"Current context from MCP server:\n```json\n{retrieval_ctx}\n```"
         )
 
         # 3. Call LLM via litellm — provider is selected by model prefix automatically
