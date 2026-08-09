@@ -39,23 +39,16 @@ load_dotenv()
 # ---------------------------------------------------------------------------
 # DeepEval judge model configuration
 # ---------------------------------------------------------------------------
-# DeepEval defaults to GPT-4o as its judge model. We route it through Gemini's
-# OpenAI-compatible endpoint so it uses a SEPARATE quota pool from the main
-# EVAL_MODEL (which uses Groq). This prevents both from hitting the same 30k TPM
-# Groq limit at the same time during grounding tests (which use 2 judge metrics).
-_gemini_key = os.environ.get("GEMINI_API_KEY", "")
+# DeepEval defaults to GPT-4o as its judge model. We route it through Groq's
+# OpenAI-compatible endpoint. We have 30s throttles to prevent hitting the 
+# 30k TPM Groq limit.
 _groq_key   = os.environ.get("GROQ_API_KEY", "")
 
-if _gemini_key:
-    # Prefer Gemini as judge — 1M tokens/day free, separate from Groq quota
-    os.environ.setdefault("OPENAI_API_KEY",    _gemini_key)
-    os.environ.setdefault("OPENAI_BASE_URL",   "https://generativelanguage.googleapis.com/v1beta/openai/")
-    os.environ.setdefault("OPENAI_MODEL_NAME", "gemini-2.0-flash")
-elif _groq_key:
-    # Fallback: Groq (shares quota with main EVAL_MODEL — may hit rate limits)
+if _groq_key:
     os.environ.setdefault("OPENAI_API_KEY",    _groq_key)
     os.environ.setdefault("OPENAI_BASE_URL",   "https://api.groq.com/openai/v1")
     os.environ.setdefault("OPENAI_MODEL_NAME", "llama-3.3-70b-versatile")
+
 
 # Suppress litellm's verbose success/debug output during tests
 litellm.success_callback = []
