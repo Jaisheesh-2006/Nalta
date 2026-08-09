@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
+	"time"
 )
 
 // DBColumn represents a single column from INFORMATION_SCHEMA.COLUMNS.
@@ -31,8 +33,29 @@ type TableSchema struct {
 
 // IntrospectSchema queries INFORMATION_SCHEMA to get the full database schema
 // including column metadata and foreign key relationships.
-func IntrospectSchema(db *sql.DB) ([]TableSchema, error) {
-	columns, err := queryColumns(db)
+// Accepts a context for timeout/cancellation. Retries once on transient errors.
+func IntrospectSchema(ctx context.Context, db *sql.DB) ([]TableSchema, error) {
+	const maxAttempts = 2
+	var columns []DBColumn
+	var err error
+
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		columns, err = queryColumns(db)
+		if err == nil {
+			break
+		}
+		if attempt < maxAttempts-1 {
+			// Brief backoff before retry — respect context cancellation
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(100 * time.Millisecond):
+			}
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("querying columns: %w", err)
 	}
@@ -42,7 +65,13 @@ func IntrospectSchema(db *sql.DB) ([]TableSchema, error) {
 		return nil, fmt.Errorf("querying foreign keys: %w", err)
 	}
 
-	return buildTableSchemas(columns, fks), nil
+	// Filter out views — only return BASE TABLEs
+	tables, err := queryTableTypes(db)
+	if err != nil {
+		return nil, fmt.Errorf("querying table types: %w", err)
+	}
+
+	return buildTableSchemas(columns, fks, tables), nil
 }
 
 func queryColumns(db *sql.DB) ([]DBColumn, error) {
@@ -93,7 +122,29 @@ func queryForeignKeys(db *sql.DB) ([]DBForeignKey, error) {
 	return fks, rows.Err()
 }
 
-func buildTableSchemas(columns []DBColumn, fks []DBForeignKey) []TableSchema {
+func queryTableTypes(db *sql.DB) (map[string]string, error) {
+	rows, err := db.Query(`
+		SELECT TABLE_NAME, TABLE_TYPE
+		FROM   INFORMATION_SCHEMA.TABLES
+		WHERE  TABLE_SCHEMA = DATABASE()
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	types := make(map[string]string)
+	for rows.Next() {
+		var name, ttype string
+		if err := rows.Scan(&name, &ttype); err != nil {
+			return nil, err
+		}
+		types[name] = ttype
+	}
+	return types, rows.Err()
+}
+
+func buildTableSchemas(columns []DBColumn, fks []DBForeignKey, tableTypes map[string]string) []TableSchema {
 	// Build FK lookup: "table.column" -> DBForeignKey
 	fkMap := make(map[string]DBForeignKey)
 	for _, fk := range fks {
@@ -101,11 +152,15 @@ func buildTableSchemas(columns []DBColumn, fks []DBForeignKey) []TableSchema {
 		fkMap[key] = fk
 	}
 
-	// Group columns by table
+	// Group columns by table, skipping VIEWs
 	tableMap := make(map[string]*TableSchema)
 	var tableOrder []string
 
 	for _, col := range columns {
+		// Skip views
+		if t, ok := tableTypes[col.TableName]; ok && t != "BASE TABLE" {
+			continue
+		}
 		ts, exists := tableMap[col.TableName]
 		if !exists {
 			ts = &TableSchema{

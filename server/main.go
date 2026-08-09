@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"log/slog"
 	"os"
@@ -39,7 +40,7 @@ func main() {
 	}
 
 	// Introspect schema
-	dbSchema, err := IntrospectSchema(db)
+	dbSchema, err := IntrospectSchema(context.Background(), db)
 	if err != nil {
 		slog.Error("failed to introspect schema", "error", err)
 		os.Exit(1)
