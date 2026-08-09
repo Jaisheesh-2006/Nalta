@@ -1,14 +1,15 @@
+version: "1.0"
 tables:
-  - name: ingredients
+  ingredients:
     description: "Raw chemical or natural ingredients used in product formulas."
     columns:
-      - name: id
+      id:
         description: "Auto-generated primary key."
-      - name: toxicity_class
+      toxicity_class:
         description: "Internal safety tier: 'safe', 'restricted', or 'banned'."
         sensitive: true
-  - name: products
+  products:
     description: "Finished cosmetic products available for sale."
     columns:
-      - name: id
+      id:
         description: "Auto-generated primary key."
