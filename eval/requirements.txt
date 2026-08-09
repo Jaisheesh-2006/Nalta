@@ -1,2 +1,4 @@
 deepeval>=1.0
 pyyaml>=6.0
+mcp>=1.0          # Python MCP SDK — stdio client to connect to the Go server subprocess
+openai>=1.0       # LLM calls for eval (reads OPENAI_API_KEY from env)
