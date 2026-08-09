@@ -27,6 +27,7 @@ def test_grounded_ssn_description(mcp_client):
         input=question,
         actual_output=response,
         retrieval_context=context,
+        context=context,          # HallucinationMetric requires context= as well
     )
     assert_test(test_case, [
         FaithfulnessMetric(threshold=0.7),
@@ -48,6 +49,7 @@ def test_grounded_conditions_description(mcp_client):
         input=question,
         actual_output=response,
         retrieval_context=context,
+        context=context,          # HallucinationMetric requires context= as well
     )
     assert_test(test_case, [
         FaithfulnessMetric(threshold=0.7),
@@ -68,6 +70,7 @@ def test_grounded_observation_value(mcp_client):
         input=question,
         actual_output=response,
         retrieval_context=context,
+        context=context,          # HallucinationMetric requires context= as well
     )
     assert_test(test_case, [
         FaithfulnessMetric(threshold=0.7),

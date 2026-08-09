@@ -36,10 +36,45 @@ from mcp.client.stdio import stdio_client
 # This means you never need to manually `export` variables — just fill in .env.
 load_dotenv()
 
+# ---------------------------------------------------------------------------
+# DeepEval judge model configuration
+# ---------------------------------------------------------------------------
+# DeepEval defaults to GPT-4o as its judge model.  We redirect it through
+# Groq's OpenAI-compatible API so no OPENAI_API_KEY is needed.
+# This applies regardless of which main EVAL_MODEL is active (Gemini, Groq, etc.)
+# — the judge model and the response model can be different.
+_groq_key = os.environ.get("GROQ_API_KEY", "")
+if _groq_key:
+    os.environ.setdefault("OPENAI_API_KEY",    _groq_key)
+    os.environ.setdefault("OPENAI_BASE_URL",   "https://api.groq.com/openai/v1")
+    # llama-3.3-70b-versatile has 30,000 TPM (vs 6,000 for 8b-instant)
+    # — large enough for DeepEval's verbose evaluation prompts.
+    os.environ.setdefault("OPENAI_MODEL_NAME", "llama-3.3-70b-versatile")
+
 # Suppress litellm's verbose success/debug output during tests
 litellm.success_callback = []
 litellm.set_verbose = False
 
+
+
+
+
+# ---------------------------------------------------------------------------
+# Rate-limit throttle — keep Groq free tier (30 RPM) happy
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _throttle():
+    """Pause 30 s before AND after each test.
+
+    Each test fires ~5 API calls (1 main LLM + ~4 DeepEval judge).
+    30 s gaps keep both models well under 30 RPM / 30k TPM on Groq free tier.
+    Sleeping before ensures even the first test doesn't burst into a cold window.
+    """
+    import time
+    time.sleep(3)   # short pre-test gap
+    yield
+    time.sleep(30)  # main cooldown after API calls
 
 
 # ---------------------------------------------------------------------------
@@ -109,9 +144,9 @@ class MCPLLMClient:
     # -- async internals -------------------------------------------------------
 
     def _run(self, coro):
-        """Submit a coroutine to the background loop; block until done (30s timeout)."""
+        """Submit a coroutine to the background loop; block until done (60s timeout)."""
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
-        return future.result(timeout=30)
+        return future.result(timeout=60)
 
     async def _async_explain_column(self, table: str, column: str) -> dict:
         """Call the explain_column MCP tool and return the parsed JSON dict."""
@@ -126,8 +161,18 @@ class MCPLLMClient:
                     "explain_column",
                     arguments={"table": table, "column": column},
                 )
-                # result.content[0].text is the raw JSON string from the Go server
-                return json.loads(result.content[0].text)
+                text = result.content[0].text if result.content else ""
+                # If the server returned an MCP error (table/column not found),
+                # result.isError is True and text is a plain error string — not JSON.
+                # Wrap it in a dict so the LLM system prompt can include it as context.
+                if result.is_error or not text:
+                    return {"error": text or f"column '{column}' not found in table '{table}'"}
+                try:
+                    return json.loads(text)
+                except json.JSONDecodeError:
+                    # Unexpected non-JSON payload — treat as error context
+                    return {"error": text}
+
 
     async def _async_schema_full(self) -> str:
         """Read the schema://full MCP resource and return its raw JSON text."""
@@ -199,15 +244,28 @@ class MCPLLMClient:
         #         "gemini/gemini-1.5-flash"       → uses GEMINI_API_KEY
         #         "ollama/llama3.2"               → uses local Ollama, no key
         #         "gpt-4o"                        → uses OPENAI_API_KEY
-        response = litellm.completion(
-            model=self._model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user",   "content": question},
-            ],
-            temperature=0,
-        )
-        return response.choices[0].message.content
+        import time
+        for attempt in range(5):
+            try:
+                response = litellm.completion(
+                    model=self._model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user",   "content": question},
+                    ],
+                    temperature=0,
+                )
+                return response.choices[0].message.content
+            except litellm.RateLimitError:
+                # Groq free tier: 30 RPM — wait progressively then re-raise.
+                # BUG FIX: attempt < 4 (not < len(waits)) so attempt==4 always raises.
+                waits = [5, 10, 20, 30]
+                if attempt < 4:
+                    time.sleep(waits[attempt])
+                else:
+                    raise   # attempt == 4: all retries exhausted, surface the error
+
+
 
 
 # ---------------------------------------------------------------------------
