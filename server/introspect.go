@@ -76,7 +76,7 @@ func IntrospectSchema(ctx context.Context, db *sql.DB) ([]TableSchema, error) {
 
 func queryColumns(db *sql.DB) ([]DBColumn, error) {
 	rows, err := db.Query(`
-		SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COALESCE(COLUMN_DEFAULT, ''), EXTRA
+		SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT, EXTRA
 		FROM   INFORMATION_SCHEMA.COLUMNS
 		WHERE  TABLE_SCHEMA = DATABASE()
 		ORDER  BY TABLE_NAME, ORDINAL_POSITION
@@ -89,17 +89,21 @@ func queryColumns(db *sql.DB) ([]DBColumn, error) {
 	var cols []DBColumn
 	for rows.Next() {
 		var c DBColumn
-		var nullable, extra string
-		if err := rows.Scan(&c.TableName, &c.ColumnName, &c.DataType, &nullable, &c.DefaultValue, &extra); err != nil {
+		var nullable string
+		var defaultVal sql.NullString
+		var extra sql.NullString
+		if err := rows.Scan(&c.TableName, &c.ColumnName, &c.DataType, &nullable, &defaultVal, &extra); err != nil {
 			return nil, err
 		}
 		c.IsNullable = nullable == "YES"
+		c.DefaultValue = defaultVal.String
+
 		// Normalize MySQL type aliases to standard SQL names
 		if c.DataType == "int" {
 			c.DataType = "integer"
 		}
 		// COLUMN_DEFAULT doesn't capture AUTO_INCREMENT; detect it from EXTRA
-		if c.DefaultValue == "" && extra == "auto_increment" {
+		if c.DefaultValue == "" && extra.String == "auto_increment" {
 			c.DefaultValue = "auto_increment"
 		}
 		cols = append(cols, c)
