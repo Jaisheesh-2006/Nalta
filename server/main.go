@@ -72,7 +72,10 @@ func main() {
 
 	// Dump schema if requested
 	if cfg.DumpSchema != "" {
-		b, err := json.MarshalIndent(merged, "", "  ")
+		wrapped := struct {
+			Tables []MergedTable `json:"tables"`
+		}{Tables: merged}
+		b, err := json.MarshalIndent(wrapped, "", "  ")
 		if err != nil {
 			slog.Error("failed to marshal merged schema", "error", err)
 			os.Exit(1)
