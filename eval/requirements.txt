@@ -1,4 +1,8 @@
 deepeval>=1.0
 pyyaml>=6.0
 mcp>=1.0          # Python MCP SDK — stdio client to connect to the Go server subprocess
-openai>=1.0       # LLM calls for eval (reads OPENAI_API_KEY from env)
+litellm>=1.40     # multi-provider LLM abstraction (Groq, Gemini, Ollama, OpenAI, etc.)
+openai>=1.0       # still required internally by deepeval
+python-dotenv>=1.0  # auto-loads .env file so API keys don't need manual export
+pytest>=7.0
+pytest-timeout>=2.0

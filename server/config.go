@@ -4,13 +4,18 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 )
 
 // Config holds all configuration for the MCP server.
 type Config struct {
-	DSN         string // MySQL data source name
-	ContextFile string // Path to context.yaml
-	LogLevel    string // Log level (debug, info, warn, error)
+	DSN            string        // MySQL data source name
+	ContextFile    string        // Path to context.yaml
+	LogLevel       string        // Log level (debug, info, warn, error)
+	StartupTimeout time.Duration // DB ping timeout (0 = use default 2s)
+	StartupRetries int           // DB ping retry count (0 = use default 1)
+	DumpSchema     string        // Dump merged schema as JSON to file (or "-" for stdout) and exit
+	DumpColumn     string        // Dump specific column as JSON ("table:column") to stdout and exit
 }
 
 // LoadConfig reads configuration from CLI flags and environment variables.
@@ -21,6 +26,8 @@ func LoadConfig() (*Config, error) {
 	flag.StringVar(&cfg.DSN, "dsn", envOrDefault("DSN", ""), "MySQL DSN (prefer DSN env var to avoid credential leakage in ps)")
 	flag.StringVar(&cfg.ContextFile, "context", envOrDefault("CONTEXT_FILE", "./context.yaml"), "Path to context.yaml")
 	flag.StringVar(&cfg.LogLevel, "log-level", envOrDefault("LOG_LEVEL", "info"), "Log level (debug, info, warn, error)")
+	flag.StringVar(&cfg.DumpSchema, "dump-schema", "", "If set, dumps merged schema as JSON to this file (or '-' for stdout) and exits")
+	flag.StringVar(&cfg.DumpColumn, "dump-column", "", "If set (format 'table:column'), dumps column JSON to stdout and exits")
 	flag.Parse()
 
 	if cfg.DSN == "" {
@@ -36,4 +43,18 @@ func envOrDefault(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// resolveStartupSettings returns the effective startup timeout and retry count.
+// If the config fields are zero, sensible defaults are used.
+func resolveStartupSettings(cfg *Config) (time.Duration, int) {
+	timeout := cfg.StartupTimeout
+	retries := cfg.StartupRetries
+	if timeout == 0 {
+		timeout = 2 * time.Second
+	}
+	if retries == 0 {
+		retries = 1
+	}
+	return timeout, retries
 }

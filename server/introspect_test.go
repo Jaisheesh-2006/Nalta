@@ -18,11 +18,11 @@ func TestIntrospectSchema_Success(t *testing.T) {
 	}
 	defer db.Close()
 
-	colRows := sqlmock.NewRows([]string{"TABLE_NAME", "COLUMN_NAME", "DATA_TYPE", "IS_NULLABLE", "COLUMN_DEFAULT"}).
-		AddRow("ingredients", "id", "int", "NO", "").
-		AddRow("ingredients", "toxicity_class", "text", "YES", "").
-		AddRow("products", "id", "int", "NO", "")
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COALESCE(COLUMN_DEFAULT, '')")).WillReturnRows(colRows)
+	colRows := sqlmock.NewRows([]string{"TABLE_NAME", "COLUMN_NAME", "DATA_TYPE", "IS_NULLABLE", "COLUMN_DEFAULT", "EXTRA"}).
+		AddRow("ingredients", "id", "int", "NO", "", "auto_increment").
+		AddRow("ingredients", "toxicity_class", "text", "YES", "", "").
+		AddRow("products", "id", "int", "NO", "", "auto_increment")
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COALESCE(COLUMN_DEFAULT, ''), EXTRA")).WillReturnRows(colRows)
 
 	fkRows := sqlmock.NewRows([]string{"TABLE_NAME", "COLUMN_NAME", "REFERENCED_TABLE_NAME", "REFERENCED_COLUMN_NAME"})
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT TABLE_NAME, COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME")).WillReturnRows(fkRows)
@@ -40,6 +40,14 @@ func TestIntrospectSchema_Success(t *testing.T) {
 	if len(out) != 2 {
 		t.Fatalf("expected 2 tables, got %d", len(out))
 	}
+	// Verify int -> integer normalization and auto_increment default
+	idCol := out[0].Columns[0]
+	if idCol.DataType != "integer" {
+		t.Errorf("expected data_type 'integer', got %q", idCol.DataType)
+	}
+	if idCol.DefaultValue != "auto_increment" {
+		t.Errorf("expected default_value 'auto_increment', got %q", idCol.DefaultValue)
+	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet expectations: %v", err)
 	}
@@ -55,10 +63,10 @@ func TestIntrospectSchema_RetryThenSuccess(t *testing.T) {
 	defer db.Close()
 
 	// First attempt fails
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COALESCE(COLUMN_DEFAULT, '')")).WillReturnError(sql.ErrConnDone)
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COALESCE(COLUMN_DEFAULT, ''), EXTRA")).WillReturnError(sql.ErrConnDone)
 	// Second attempt succeeds
-	colRows := sqlmock.NewRows([]string{"TABLE_NAME", "COLUMN_NAME", "DATA_TYPE", "IS_NULLABLE", "COLUMN_DEFAULT"}).AddRow("t1", "c1", "int", "NO", "")
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COALESCE(COLUMN_DEFAULT, '')")).WillReturnRows(colRows)
+	colRows := sqlmock.NewRows([]string{"TABLE_NAME", "COLUMN_NAME", "DATA_TYPE", "IS_NULLABLE", "COLUMN_DEFAULT", "EXTRA"}).AddRow("t1", "c1", "int", "NO", "", "")
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COALESCE(COLUMN_DEFAULT, ''), EXTRA")).WillReturnRows(colRows)
 
 	fkRows := sqlmock.NewRows([]string{"TABLE_NAME", "COLUMN_NAME", "REFERENCED_TABLE_NAME", "REFERENCED_COLUMN_NAME"})
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT TABLE_NAME, COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME")).WillReturnRows(fkRows)
@@ -87,10 +95,10 @@ func TestIntrospectSchema_SkipView(t *testing.T) {
 	}
 	defer db.Close()
 
-	colRows := sqlmock.NewRows([]string{"TABLE_NAME", "COLUMN_NAME", "DATA_TYPE", "IS_NULLABLE", "COLUMN_DEFAULT"}).
-		AddRow("v_view", "vcol", "int", "NO", "").
-		AddRow("t", "id", "int", "NO", "")
-	mock.ExpectQuery(regexp.QuoteMeta("SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COALESCE(COLUMN_DEFAULT, '')")).WillReturnRows(colRows)
+	colRows := sqlmock.NewRows([]string{"TABLE_NAME", "COLUMN_NAME", "DATA_TYPE", "IS_NULLABLE", "COLUMN_DEFAULT", "EXTRA"}).
+		AddRow("v_view", "vcol", "int", "NO", "", "").
+		AddRow("t", "id", "int", "NO", "", "")
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COALESCE(COLUMN_DEFAULT, ''), EXTRA")).WillReturnRows(colRows)
 
 	fkRows := sqlmock.NewRows([]string{"TABLE_NAME", "COLUMN_NAME", "REFERENCED_TABLE_NAME", "REFERENCED_COLUMN_NAME"})
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT TABLE_NAME, COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME")).WillReturnRows(fkRows)

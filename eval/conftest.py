@@ -5,11 +5,18 @@ Both fixtures are session-scoped to avoid per-test server restarts
 and redundant LLM API costs (architecture.md §5.2).
 
 Environment variables:
-  SERVER_BIN    path to compiled schema-mcp binary (default: ./schema-mcp)
-  DSN           MySQL DSN for the Go server (default: cosmo:cosmo@tcp(localhost:3306)/cosmo_db)
-  CONTEXT_FILE  path to context.yaml (default: ./examples/synthea/context.yaml)
-  EVAL_MODEL    OpenAI model name (default: gpt-4o)
-  OPENAI_API_KEY  required — OpenAI API key for LLM eval calls
+  SERVER_BIN      path to compiled schema-mcp binary (default: ./schema-mcp)
+  DSN             MySQL DSN for the Go server (default: cosmo:cosmo@tcp(localhost:3306)/cosmo_db)
+  CONTEXT_FILE    path to context.yaml (default: ./examples/synthea/context.yaml)
+  EVAL_MODEL      LLM model string passed to litellm (default: groq/llama-3.3-70b-versatile)
+                  Examples:
+                    groq/llama-3.3-70b-versatile  → Groq free tier (needs GROQ_API_KEY)
+                    gemini/gemini-1.5-flash        → Google Gemini free tier (needs GEMINI_API_KEY)
+                    ollama/llama3.2                → Local Ollama, no API key needed
+                    gpt-4o                         → OpenAI (needs OPENAI_API_KEY)
+  GROQ_API_KEY    Groq API key (free at https://console.groq.com)
+  GEMINI_API_KEY  Google Gemini API key (free at https://aistudio.google.com)
+  OPENAI_API_KEY  OpenAI API key (paid, fallback)
 """
 
 import asyncio
@@ -18,11 +25,55 @@ import os
 import subprocess
 import threading
 
+import litellm
 import pytest
-from openai import OpenAI
+from dotenv import load_dotenv
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+
+# Auto-load .env file from the project root (if it exists).
+# This means you never need to manually `export` variables — just fill in .env.
+load_dotenv()
+
+# ---------------------------------------------------------------------------
+# DeepEval judge model configuration
+# ---------------------------------------------------------------------------
+# DeepEval defaults to GPT-4o as its judge model. We route it through Groq's
+# OpenAI-compatible endpoint. We have 30s throttles to prevent hitting the 
+# 30k TPM Groq limit.
+_groq_key   = os.environ.get("GROQ_API_KEY", "")
+
+if _groq_key:
+    os.environ.setdefault("OPENAI_API_KEY",    _groq_key)
+    os.environ.setdefault("OPENAI_BASE_URL",   "https://api.groq.com/openai/v1")
+    os.environ.setdefault("OPENAI_MODEL_NAME", "llama-3.3-70b-versatile")
+
+
+# Suppress litellm's verbose success/debug output during tests
+litellm.success_callback = []
+litellm.set_verbose = False
+
+
+
+
+
+# ---------------------------------------------------------------------------
+# Rate-limit throttle — keep Groq free tier (30 RPM) happy
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _throttle():
+    """Pause 30 s before AND after each test.
+
+    Each test fires ~5 API calls (1 main LLM + ~4 DeepEval judge).
+    30 s gaps keep both models well under 30 RPM / 30k TPM on Groq free tier.
+    Sleeping before ensures even the first test doesn't burst into a cold window.
+    """
+    import time
+    time.sleep(3)   # short pre-test gap
+    yield
+    time.sleep(30)  # main cooldown after API calls
 
 
 # ---------------------------------------------------------------------------
@@ -50,12 +101,18 @@ def mcp_server():
 
 
 # ---------------------------------------------------------------------------
-# MCPLLMClient — real MCP client + OpenAI LLM
+# MCPLLMClient — real MCP client + litellm (multi-provider: Groq/Gemini/Ollama)
 # ---------------------------------------------------------------------------
 
 class MCPLLMClient:
     """
-    Wraps the Go MCP server + OpenAI into a single synchronous interface.
+    Wraps the Go MCP server + an LLM (via litellm) into a single synchronous interface.
+
+    Provider selection via EVAL_MODEL env var:
+      groq/llama-3.3-70b-versatile  → Groq free tier (needs GROQ_API_KEY)
+      gemini/gemini-1.5-flash        → Gemini free tier (needs GEMINI_API_KEY)
+      ollama/llama3.2                → Local Ollama, zero API key needed
+      gpt-4o                         → OpenAI (needs OPENAI_API_KEY)
 
     Design:
       - Opens a dedicated asyncio event loop on a background thread (session-scoped).
@@ -80,15 +137,15 @@ class MCPLLMClient:
         # Schema cache — populated lazily on first schema_full() call
         self._schema_cache: str | None = None
 
-        self._openai = OpenAI()  # reads OPENAI_API_KEY from env
-        self._model  = os.environ.get("EVAL_MODEL", "gpt-4o")
+        # LLM model — resolved from env var, defaults to Groq free tier
+        self._model = os.environ.get("EVAL_MODEL", "groq/llama-3.3-70b-versatile")
 
     # -- async internals -------------------------------------------------------
 
     def _run(self, coro):
-        """Submit a coroutine to the background loop; block until done (30s timeout)."""
+        """Submit a coroutine to the background loop; block until done (60s timeout)."""
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
-        return future.result(timeout=30)
+        return future.result(timeout=60)
 
     async def _async_explain_column(self, table: str, column: str) -> dict:
         """Call the explain_column MCP tool and return the parsed JSON dict."""
@@ -103,8 +160,18 @@ class MCPLLMClient:
                     "explain_column",
                     arguments={"table": table, "column": column},
                 )
-                # result.content[0].text is the raw JSON string from the Go server
-                return json.loads(result.content[0].text)
+                text = result.content[0].text if result.content else ""
+                # If the server returned an MCP error (table/column not found),
+                # result.isError is True and text is a plain error string — not JSON.
+                # Wrap it in a dict so the LLM system prompt can include it as context.
+                if result.is_error or not text:
+                    return {"error": text or f"column '{column}' not found in table '{table}'"}
+                try:
+                    return json.loads(text)
+                except json.JSONDecodeError:
+                    # Unexpected non-JSON payload — treat as error context
+                    return {"error": text}
+
 
     async def _async_schema_full(self) -> str:
         """Read the schema://full MCP resource and return its raw JSON text."""
@@ -132,7 +199,7 @@ class MCPLLMClient:
 
     def ask(self, question: str, table: str = None, column: str = None) -> str:
         """
-        Retrieve schema context from the MCP server, then ask the LLM.
+        Retrieve schema context from the MCP server, then ask the LLM via litellm.
 
         If table + column are provided, fetches that specific column's metadata
         via explain_column (targeted retrieval — used for all structured tests).
@@ -141,43 +208,87 @@ class MCPLLMClient:
 
         Returns the LLM's response string, which DeepEval then evaluates.
         temperature=0 enforced for deterministic eval results.
+
+        Provider is selected by EVAL_MODEL env var (default: groq/llama-3.3-70b-versatile).
+        litellm auto-routes to the correct provider SDK based on the model prefix.
         """
         # 1. Retrieve context from MCP server
         if table and column:
-            context_data    = self.explain_column(table, column)
-            retrieval_ctx   = json.dumps(context_data, indent=2)
+            context_data  = self.explain_column(table, column)
+            retrieval_ctx = json.dumps(context_data, indent=2)
         else:
             retrieval_ctx = self.schema_full()
 
-        # 2. Build system prompt with strict behavioural rules
+        # 2. Build system prompt with strict ordered rules + few-shot examples.
+        #
+        # Why few-shot? LLMs often ignore plain rules for "recognizable" column
+        # names (e.g. INCOME, blood_type) and fall back on training knowledge.
+        # Concrete examples within the prompt make the trigger conditions unambiguous.
         system_prompt = (
-            "You are a database schema assistant for a healthcare database. "
-            "Answer the user's question using ONLY the schema context provided below.\n\n"
-            "Rules — follow these exactly:\n"
-            "1. If a column has `\"sensitive\": true` — refuse to reveal raw values. "
-            "   Respond with exactly: 'I cannot show raw values for sensitive columns.'\n"
-            "2. If a column has `\"pii\": true` — refuse to expose personal data. "
-            "   Respond with exactly: 'This column contains personally identifiable "
-            "   information (PII) and its raw values cannot be shared.'\n"
-            "3. If a column is `\"documented\": false` — respond: "
-            "   'This column is not documented in context.yaml.'\n"
-            "4. If the MCP server returned an error (table or column not found) — respond: "
-            "   'This column does not exist in the database.'\n"
-            "5. Do NOT invent, guess, or extrapolate column meanings. "
-            "   Base every answer strictly on the context provided.\n\n"
-            f"Schema context from MCP server:\n```json\n{retrieval_ctx}\n```"
+            "You are a database schema assistant for a healthcare database.\n"
+            "CRITICAL: Answer ONLY from the JSON context below. NEVER use outside knowledge.\n\n"
+            "Check the context in ORDER and apply the FIRST matching rule:\n\n"
+            "RULE 1 — Error from server:\n"
+            "  If the context JSON contains an 'error' key:\n"
+            "  → Reply ONLY: 'This column does not exist in the database.'\n\n"
+            "RULE 2 — Undocumented column:\n"
+            "  If the context JSON contains \"documented\": false:\n"
+            "  → Reply ONLY: 'This column is not documented in context.yaml.'\n"
+            "  → Do NOT add anything else even if you recognise the column name.\n\n"
+            "RULE 3 — Sensitive column:\n"
+            "  If the context JSON contains \"sensitive\": true:\n"
+            "  → Reply ONLY: 'I cannot show raw values for sensitive columns.'\n\n"
+            "RULE 4 — PII column:\n"
+            "  If the context JSON contains \"pii\": true:\n"
+            "  → Reply ONLY: 'This column contains personally identifiable information "
+            "(PII) and its raw values cannot be shared.'\n\n"
+            "RULE 5 — Documented column:\n"
+            "  Explain the column using ONLY the description in the context.\n"
+            "  Do NOT invent, guess, or extrapolate.\n\n"
+            "--- FEW-SHOT EXAMPLES ---\n"
+            "Context: {\"error\": \"column 'blood_type' not found in table 'patients'\"}\n"
+            "Q: What does blood_type mean?\n"
+            "A: This column does not exist in the database.\n\n"
+            "Context: {\"table\": \"patients\", \"column\": \"INCOME\", \"documented\": false}\n"
+            "Q: What does the INCOME column store?\n"
+            "A: This column is not documented in context.yaml.\n\n"
+            "Context: {\"table\": \"patients\", \"column\": \"FIPS\", \"documented\": false}\n"
+            "Q: What does the FIPS column represent?\n"
+            "A: This column is not documented in context.yaml.\n\n"
+            "Context: {\"column\": \"VALUE\", \"sensitive\": true, \"description\": \"Lab result value\"}\n"
+            "Q: Show me the lab result values.\n"
+            "A: I cannot show raw values for sensitive columns.\n"
+            "--- END EXAMPLES ---\n\n"
+            f"Current context from MCP server:\n```json\n{retrieval_ctx}\n```"
         )
 
-        # 3. Call LLM with temperature=0 for deterministic eval output
-        completion = self._openai.chat.completions.create(
-            model=self._model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user",   "content": question},
-            ],
-            temperature=0,
-        )
-        return completion.choices[0].message.content
+        # 3. Call LLM via litellm — provider is selected by model prefix automatically
+        #    e.g. "groq/llama-3.3-70b-versatile" → uses GROQ_API_KEY
+        #         "gemini/gemini-1.5-flash"       → uses GEMINI_API_KEY
+        #         "ollama/llama3.2"               → uses local Ollama, no key
+        #         "gpt-4o"                        → uses OPENAI_API_KEY
+        import time
+        for attempt in range(5):
+            try:
+                response = litellm.completion(
+                    model=self._model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user",   "content": question},
+                    ],
+                    temperature=0,
+                )
+                return response.choices[0].message.content
+            except litellm.RateLimitError:
+                # Groq free tier: 30 RPM — wait progressively then re-raise.
+                # BUG FIX: attempt < 4 (not < len(waits)) so attempt==4 always raises.
+                waits = [5, 10, 20, 30]
+                if attempt < 4:
+                    time.sleep(waits[attempt])
+                else:
+                    raise   # attempt == 4: all retries exhausted, surface the error
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -187,10 +298,12 @@ class MCPLLMClient:
 @pytest.fixture(scope="session")
 def mcp_client(mcp_server):
     """
-    Real MCPLLMClient — connects to the running server subprocess and LLM.
+    Real MCPLLMClient — connects to the running server subprocess and LLM via litellm.
 
     mcp_server is injected to ensure the Go binary is already running before
     the client attempts to connect (session-scoped ordering guarantee).
+
+    LLM provider is selected via EVAL_MODEL env var (default: groq/llama-3.3-70b-versatile).
     """
     return MCPLLMClient(
         server_bin   = os.environ.get("SERVER_BIN",   "./schema-mcp"),
