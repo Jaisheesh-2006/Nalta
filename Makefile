@@ -7,7 +7,7 @@ GOBUILD := $(GOCMD) build
 all: build-server test
 
 build-server:
-	$(GOBUILD) -o schema-mcp ./server
+	$(GOBUILD) -o nalta .
 
 test:
 	$(GOTEST)

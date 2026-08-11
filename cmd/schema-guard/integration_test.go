@@ -16,7 +16,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Jaisheesh-2006/schema-context-mcp/internal/contextfile"
+	"github.com/Jaisheesh-2006/nalta/internal/contextfile"
 )
 
 // skipIfNoDocker skips the test if Docker is not available on the host.

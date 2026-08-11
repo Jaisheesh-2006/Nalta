@@ -41,7 +41,7 @@ jobs:
           done
 
       - name: Build MCP server
-        run: go build -o schema-mcp ./server
+        run: go build -o nalta .
 
       - uses: actions/setup-python@v5
         with:
@@ -53,7 +53,7 @@ jobs:
       - name: Run eval suite
         run: pytest eval/ -v --timeout=60
         env:
-          SERVER_BIN:     "./schema-mcp"
+          SERVER_BIN:     "./nalta"
           DSN:            "cosmo:${{ secrets.MYSQL_PASSWORD || 'ci-cosmo-only' }}@tcp(127.0.0.1:3306)/cosmo_db"
           CONTEXT_FILE:   "./examples/synthea/context.yaml"
           # --- LLM provider selection ---

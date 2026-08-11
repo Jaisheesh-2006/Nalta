@@ -34,7 +34,7 @@ func TestIntegration_IntrospectAndMergeAgainstExamples(t *testing.T) {
     }
 
     // Build server binary
-    build := exec.Command("go", "build", "-o", "schema-mcp", "./server")
+    build := exec.Command("go", "build", "-o", "nalta", ".")
     build.Dir = projectRoot
     if out, err := build.CombinedOutput(); err != nil {
         t.Fatalf("go build failed: %v\n%s", err, string(out))
@@ -61,14 +61,13 @@ func TestIntegration_IntrospectAndMergeAgainstExamples(t *testing.T) {
     defer db.Close()
 
     // Run server to dump schema to stdout
-    srv := exec.Command("./schema-mcp", "--dsn", dsn, "--context", filepath.Join("examples", "context.yaml"), "--dump-schema", "-")
-    srv.Dir = projectRoot
-    stdout, err := srv.StdoutPipe()
+    run := exec.Command("./nalta", "--dsn", dsn, "--context", filepath.Join("examples", "context.yaml"), "--dump-schema", "-")
+    run.Dir = projectRoot
+    stdout, err := run.StdoutPipe()
     if err != nil {
         t.Fatalf("stdout pipe: %v", err)
     }
-    srv.Stderr = os.Stderr
-    if err := srv.Start(); err != nil {
+    if err := run.Start(); err != nil {
         t.Fatalf("start server: %v", err)
     }
 
@@ -77,7 +76,7 @@ func TestIntegration_IntrospectAndMergeAgainstExamples(t *testing.T) {
     if _, err := io.Copy(&buf, stdout); err != nil {
         t.Fatalf("reading stdout: %v", err)
     }
-    srv.Wait()
+    run.Wait()
 
     // Compare JSON to example
     var got interface{}
@@ -100,7 +99,7 @@ func TestIntegration_IntrospectAndMergeAgainstExamples(t *testing.T) {
     }
 
     // Now test explain_column via dump-column
-    srv2 := exec.Command("./schema-mcp", "--dsn", dsn, "--context", filepath.Join("examples", "context.yaml"), "--dump-column", "ingredients:toxicity_class")
+    srv2 := exec.Command("./nalta", "--dsn", dsn, "--context", filepath.Join("examples", "context.yaml"), "--dump-column", "ingredients:toxicity_class")
     srv2.Dir = projectRoot
     out2, err := srv2.Output()
     if err != nil {

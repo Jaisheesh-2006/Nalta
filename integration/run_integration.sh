@@ -11,14 +11,14 @@ echo "Starting docker compose (MySQL)..."
 docker compose up -d
 
 echo "Building server..."
-go build -o schema-mcp ./server
+go build -o nalta .
 
 export DSN="cosmo:cosmo@tcp(localhost:3306)/cosmo_db"
 export CONTEXT_FILE="./examples/context.yaml"
 
 echo "Running server in background (logs -> integration/server.log)..."
 mkdir -p integration
-./schema-mcp --dsn "$DSN" --context "$CONTEXT_FILE" > integration/server.log 2>&1 &
+./nalta --dsn "$DSN" --context "$CONTEXT_FILE" > integration/server.log 2>&1 &
 SERVER_PID=$!
 echo "Server PID: $SERVER_PID"
 

@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/Jaisheesh-2006/schema-context-mcp/internal/contextfile"
+	"github.com/Jaisheesh-2006/nalta/internal/contextfile"
 )
 
 // FindingSeverity indicates how critical a schema change is.

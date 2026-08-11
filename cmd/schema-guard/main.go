@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/Jaisheesh-2006/schema-context-mcp/internal/contextfile"
+	"github.com/Jaisheesh-2006/nalta/internal/contextfile"
 )
 
 func main() {

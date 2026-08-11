@@ -3,8 +3,8 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN go build -o /schema-mcp ./server
+RUN go build -o /nalta .
 
 FROM alpine:3.20
-COPY --from=build /schema-mcp /usr/local/bin/schema-mcp
-ENTRYPOINT ["schema-mcp"]
+COPY --from=build /nalta /usr/local/bin/nalta
+ENTRYPOINT ["nalta"]

@@ -10,7 +10,7 @@ Usage (Linux / macOS / WSL):
 
 What it does:
 - `docker compose up -d` using repository `docker-compose.yml` (starts MySQL seeded with `examples/migrations`).
-- `go build -o schema-mcp ./server` and runs the built binary with `DSN` and `CONTEXT_FILE` set for the example DB.
+- `go build -o nalta .` and runs the built binary with `DSN` and `CONTEXT_FILE` set for the example DB.
 - Writes runtime logs to `integration/server.log` and prints the server PID.
 
 Manual checks:

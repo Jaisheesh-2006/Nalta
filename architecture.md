@@ -324,10 +324,10 @@ Returns the entire merged model as JSON.
 | Table not found in DB | MCP error: `"table 'xyz' not found"` |
 | Column not found in table | MCP error: `"column 'xyz' not found in table 'abc'"` |
 
-### 2.7 Package Layout — `/server`
+### 2.7 Package Layout — `/`
 
 ```
-server/
+/
 ├── main.go               # CLI entry point (flag parsing, wiring)
 ├── config.go             # Config struct, flag/env loading
 ├── introspect.go         # MySQL INFORMATION_SCHEMA query
@@ -469,10 +469,10 @@ If there are no flagged items, the comment is a simple green checkmark:
 Migration changes detected. No documented or sensitive columns were affected.
 ```
 
-### 3.6 Package Layout — `/action`
+### 3.6 Package Layout — `/cmd/schema-guard`
 
 ```
-action/
+cmd/schema-guard/
 ├── main.go               # Action entry point
 ├── config.go             # Input parsing (GitHub Action inputs)
 ├── snapshot.go           # Ephemeral DB spin-up, migration, introspection
@@ -496,7 +496,7 @@ internal/
     └── parse_test.go      # Validation tests (good YAML, bad YAML, edge cases)
 ```
 
-**Both `/server/main.go` and `/action/main.go` import `internal/contextfile`.**
+**Both `/main.go` and `/cmd/schema-guard/main.go` import `internal/contextfile`.**
 
 **Justification**: The `context.yaml` schema is the *only* shared contract. If Person A changes the YAML shape and updates the parser, Person B's code must not silently break. A shared package means:
 - One source of truth for parsing and validation.
@@ -651,7 +651,7 @@ jobs:
           - 3306:3306
     steps:
       - uses: actions/checkout@v4
-      - run: go build -o schema-mcp ./server
+      - run: go build -o nalta .
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -672,22 +672,22 @@ Runs independently of `schema-guard-action`. Different workflow, different trigg
 ```
 schema-context-mcp/
 │
-├── server/                        # Component A — MCP server binary
-│   ├── main.go
-│   ├── config.go
-│   ├── introspect.go
-│   ├── merge.go
-│   ├── mcp.go
-│   └── merge_test.go
+├── main.go                        # Component A — MCP server binary
+├── config.go
+├── introspect.go
+├── merge.go
+├── mcp.go
+├── merge_test.go
 │
-├── action/                        # Component B — GitHub Action binary
-│   ├── main.go
-│   ├── config.go
-│   ├── snapshot.go
-│   ├── diff.go
-│   ├── crossref.go
-│   ├── comment.go
-│   └── diff_test.go
+├── cmd/
+│   └── schema-guard/              # Component B — GitHub Action binary
+│       ├── main.go
+│       ├── config.go
+│       ├── snapshot.go
+│       ├── diff.go
+│       ├── crossref.go
+│       ├── comment.go
+│       └── diff_test.go
 │
 ├── internal/                      # Shared code (Go internal convention)
 │   └── contextfile/
@@ -767,8 +767,8 @@ docker compose up -d
 # Wait for healthy (~10s)
 
 # 2. Build and run the MCP server
-go build -o schema-mcp ./server
-./schema-mcp --dsn "cosmo:cosmo@tcp(localhost:3306)/cosmo_db" \
+go build -o nalta .
+./nalta --dsn "cosmo:cosmo@tcp(localhost:3306)/cosmo_db" \
              --context ./examples/context.yaml
 
 # The server is now listening on stdio.
@@ -779,7 +779,7 @@ go build -o schema-mcp ./server
 
 ```bash
 # Build the action binary
-go build -o schema-guard ./action
+go build -o schema-guard ./cmd/schema-guard
 
 # Run manually against two migration directories
 ./schema-guard --before-migrations ./examples/migrations \

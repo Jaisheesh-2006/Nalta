@@ -1,4 +1,4 @@
-module github.com/Jaisheesh-2006/schema-context-mcp
+module github.com/Jaisheesh-2006/nalta
 
 go 1.25.5
 

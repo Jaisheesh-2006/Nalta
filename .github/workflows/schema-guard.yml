@@ -19,7 +19,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Build schema-guard
-        run: go build -o schema-guard ./action
+        run: go build -o schema-guard ./cmd/schema-guard
 
       # Prepare before-migrations from the base branch
       - name: Checkout base branch migrations

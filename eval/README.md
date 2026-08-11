@@ -58,7 +58,7 @@ Scenarios and criteria: `testcases.yaml`
 
 ```bash
 # From project root
-go build -o schema-mcp ./server
+go build -o nalta .
 
 # Setup evaluation environment
 cd eval

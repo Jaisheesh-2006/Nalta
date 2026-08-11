@@ -83,7 +83,7 @@ def _throttle():
 @pytest.fixture(scope="session")
 def mcp_server():
     """Start the Go MCP server as a subprocess (stdio transport)."""
-    server_bin   = os.environ.get("SERVER_BIN",    "./schema-mcp")
+    server_bin   = os.environ.get("SERVER_BIN",    "./nalta")
     dsn          = os.environ.get("DSN",            "cosmo:cosmo@tcp(localhost:3306)/cosmo_db")
     context_path = os.environ.get("CONTEXT_FILE",  "./examples/synthea/context.yaml")
 
@@ -306,7 +306,7 @@ def mcp_client(mcp_server):
     LLM provider is selected via EVAL_MODEL env var (default: groq/llama-3.3-70b-versatile).
     """
     return MCPLLMClient(
-        server_bin   = os.environ.get("SERVER_BIN",   "./schema-mcp"),
+        server_bin   = os.environ.get("SERVER_BIN",   "./nalta"),
         dsn          = os.environ.get("DSN",           "cosmo:cosmo@tcp(localhost:3306)/cosmo_db"),
         context_path = os.environ.get("CONTEXT_FILE", "./examples/synthea/context.yaml"),
     )

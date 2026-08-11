@@ -3,7 +3,7 @@ package main
 import (
 	"log/slog"
 
-	"github.com/Jaisheesh-2006/schema-context-mcp/internal/contextfile"
+	"github.com/Jaisheesh-2006/nalta/internal/contextfile"
 )
 
 // ForeignKey represents a foreign key reference from the DB.
