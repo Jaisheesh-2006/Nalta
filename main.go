@@ -12,10 +12,11 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 
 	"github.com/Jaisheesh-2006/nalta/internal/contextfile"
+	"github.com/Jaisheesh-2006/nalta/internal/server"
 )
 
 func main() {
-	cfg, err := LoadConfig()
+	cfg, err := server.LoadConfig()
 	if err != nil {
 		slog.Error("failed to load config", "error", err)
 		os.Exit(1)
@@ -43,7 +44,7 @@ func main() {
 	}
 
 	// Introspect schema
-	dbSchema, err := IntrospectSchema(context.Background(), db)
+	dbSchema, err := server.IntrospectSchema(context.Background(), db)
 	if err != nil {
 		slog.Error("failed to introspect schema", "error", err)
 		os.Exit(1)
@@ -51,7 +52,7 @@ func main() {
 	slog.Info("schema introspected", "tables", len(dbSchema))
 
 	// Merge DB schema with context.yaml
-	merged := Merge(dbSchema, ctx)
+	merged := server.Merge(dbSchema, ctx)
 	slog.Info("schema merged", "tables", len(merged))
 
 	// Dump column if requested
@@ -61,7 +62,7 @@ func main() {
 			slog.Error("invalid --dump-column format, expected table:column", "val", cfg.DumpColumn)
 			os.Exit(1)
 		}
-		out, err := ExplainColumnJSON(merged, parts[0], parts[1])
+		out, err := server.ExplainColumnJSON(merged, parts[0], parts[1])
 		if err != nil {
 			slog.Error("failed to explain column", "error", err)
 			os.Exit(1)
@@ -73,7 +74,7 @@ func main() {
 	// Dump schema if requested
 	if cfg.DumpSchema != "" {
 		wrapped := struct {
-			Tables []MergedTable `json:"tables"`
+			Tables []server.MergedTable `json:"tables"`
 		}{Tables: merged}
 		b, err := json.MarshalIndent(wrapped, "", "  ")
 		if err != nil {
@@ -92,7 +93,7 @@ func main() {
 	}
 
 	// Start MCP server
-	if err := StartMCPServer(merged); err != nil {
+	if err := server.StartMCPServer(merged); err != nil {
 		slog.Error("MCP server failed", "error", err)
 		os.Exit(1)
 	}
